@@ -40,6 +40,20 @@ Home Assistant 自定义集成，用于集成12123服务。
 
 如有问题或建议，请在 [GitHub Issues](https://github.com/758639304/12123/issues) 中提出。
 
+## 捐赠
+
+如果这个项目对你有帮助，欢迎捐赠支持开发！
+
+### 支付宝
+
+![支付宝收款码](donate_alipay.jpg)
+
+### 微信
+
+![微信收款码](donate_wechat.jpg)
+
+感谢你的支持！🙏
+
 ## 许可证
 
 本项目采用 Apache License 2.0 许可证。
