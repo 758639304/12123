@@ -36,6 +36,48 @@ Home Assistant 自定义集成，用于集成12123服务。
 - 驾驶证信息查询
 - 机动车信息查询
 
+## 调试
+
+如果遇到问题需要调试，可以开启详细的日志记录。
+
+### 开启 Debug 日志
+
+在 Home Assistant 的 `configuration.yaml` 文件中添加以下配置：
+
+```yaml
+logger:
+  default: info
+  logs:
+    custom_components.12123: debug
+```
+
+或者只针对特定模块开启：
+
+```yaml
+logger:
+  default: info
+  logs:
+    custom_components.12123: debug
+    custom_components.12123.config_flow: debug
+    custom_components.12123.sensor: debug
+```
+
+保存后重启 Home Assistant，日志会输出到 Home Assistant 的日志文件中。
+
+### 查看日志
+
+- **通过 UI**: 设置 → 系统 → 日志
+- **通过文件**: 查看 `<config>/home-assistant.log` 文件
+- **通过终端**: 如果使用 Docker，可以使用 `docker logs homeassistant` 查看
+
+### 反馈问题
+
+反馈问题时，请提供：
+1. 详细的错误日志（开启 debug 后）
+2. Home Assistant 版本
+3. 集成版本
+4. 问题复现步骤
+
 ## 支持
 
 如有问题或建议，请在 [GitHub Issues](https://github.com/758639304/12123/issues) 中提出。
