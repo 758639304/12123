@@ -197,10 +197,18 @@ class MySensorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                         cookies = self._extract_auth_cookies(second_response)
 
                                         # 验证认证信息完整性
-                                        if not all(cookies.values()):
-                                            _LOGGER.error(f"Cookie提取不完整: {[k for k, v in cookies.items() if not v]}")
-                                            errors["base"] = "登录认证失败，未获取到完整的认证信息"
+                                        # jsessionid 和 access_token 是必需的，acw_tc 是可选的
+                                        required_cookies = ["jsessionid", "access_token"]
+                                        missing_required = [k for k in required_cookies if not cookies.get(k)]
+                                        
+                                        if missing_required:
+                                            _LOGGER.error(f"必需Cookie缺失: {missing_required}")
+                                            errors["base"] = "登录认证失败，未获取到必需的认证信息"
                                             return self._show_next_form(errors)
+                                        
+                                        # acw_tc 是可选的，如果缺失只记录警告
+                                        if not cookies.get("acw_tc"):
+                                            _LOGGER.warning("acw_tc Cookie未获取到，某些功能可能受限，但可以继续配置")
 
                                         # 验证登录状态 - 尝试获取用户信息来确认登录成功
                                         try:
@@ -287,6 +295,7 @@ class MySensorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             "acw_tc": None
         }
 
+        # 从重定向历史中提取 Cookie
         for redirect in response.history:
             for cookie in redirect.cookies.values():
                 if cookie.key == "JSESSIONID-L":
@@ -298,6 +307,18 @@ class MySensorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 elif cookie.key == "acw_tc":
                     cookies["acw_tc"] = cookie.value
                     _LOGGER.info("成功获取acw_tc")
+
+        # 也从最终响应中提取 Cookie（某些 Cookie 可能只在最终响应中）
+        for cookie in response.cookies.values():
+            if cookie.key == "JSESSIONID-L" and not cookies["jsessionid"]:
+                cookies["jsessionid"] = cookie.value
+                _LOGGER.info("从最终响应中成功获取JSESSIONID-L")
+            elif cookie.key == "accessToken" and not cookies["access_token"]:
+                cookies["access_token"] = cookie.value
+                _LOGGER.info("从最终响应中成功获取accessToken")
+            elif cookie.key == "acw_tc" and not cookies["acw_tc"]:
+                cookies["acw_tc"] = cookie.value
+                _LOGGER.info("从最终响应中成功获取acw_tc")
 
         return cookies
 
