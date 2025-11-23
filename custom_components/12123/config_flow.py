@@ -3,6 +3,7 @@ from homeassistant import config_entries
 import logging
 import aiohttp
 import asyncio
+import json
 from typing import Any, Dict, Optional
 
 from .const import (
@@ -69,7 +70,7 @@ class MySensorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         try:
                             response_data = await response.json()
                         except aiohttp.ContentTypeError:
-                            errors["base"] = "invalid_response"
+                            errors["base"] = ERROR_MESSAGES.get("invalid_response", "服务器响应格式错误")
                             _LOGGER.error("响应不是有效的JSON格式")
                             return self._show_user_form(errors)
 
@@ -93,23 +94,23 @@ class MySensorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         self._img_base64 = response_data.get('img')
                         if not self._img_base64:
                             _LOGGER.warning("响应中未包含图片数据")
-                            errors["base"] = "no_image_data"
+                            errors["base"] = ERROR_MESSAGES.get("no_image_data", "未获取到二维码图片")
                             return self._show_user_form(errors)
 
                     else:
-                        errors["base"] = "server_error"
+                        errors["base"] = ERROR_MESSAGES.get("server_error", "服务器错误，请稍后重试")
                         _LOGGER.error(f"GET请求失败，状态码: {response.status}")
                         # 清理session资源
                         await self._cleanup_session()
                         return self._show_user_form(errors)
 
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                errors["base"] = "connection_error"
+                errors["base"] = ERROR_MESSAGES.get("connection_error", "网络连接错误，请检查网络")
                 _LOGGER.error(f"发送GET请求时出错: {str(e)}")
                 await self._cleanup_session()
                 return self._show_user_form(errors)
             except Exception as e:
-                errors["base"] = "unknown_error"
+                errors["base"] = ERROR_MESSAGES.get("unknown_error", "未知错误")
                 _LOGGER.error(f"未知错误: {str(e)}")
                 await self._cleanup_session()
                 return self._show_user_form(errors)
@@ -136,21 +137,37 @@ class MySensorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             # 用户点击提交，发送POST请求
-            if not self._session:
-                errors["base"] = "session_lost"
-                _LOGGER.error("Session丢失，请重新配置")
-                return self._show_next_form(errors)
-
             # 检查必要的认证信息
             if not self._qrcode_digest:
-                errors["base"] = "incomplete_auth"
+                errors["base"] = ERROR_MESSAGES.get("incomplete_auth", "认证信息不完整，请重试")
                 _LOGGER.error("缺少_qrcode_digest，请重新配置")
                 return self._show_next_form(errors)
 
             if not self.token:
-                errors["base"] = "incomplete_auth"
+                errors["base"] = ERROR_MESSAGES.get("incomplete_auth", "认证信息不完整，请重试")
                 _LOGGER.error("缺少token，请重新配置")
                 return self._show_next_form(errors)
+
+            # 如果session丢失或已关闭，尝试重新创建
+            if not self._session or self._session.closed:
+                _LOGGER.warning("Session丢失或已关闭，尝试重新创建session")
+                try:
+                    # 重新创建session
+                    ssl_context = await self.hass.async_add_executor_job(self._create_ssl_context)
+                    connector = aiohttp.TCPConnector(
+                        ssl=ssl_context,
+                        force_close=True,
+                        enable_cleanup_closed=True
+                    )
+                    self._session = aiohttp.ClientSession(
+                        timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+                        connector=connector
+                    )
+                    _LOGGER.info("成功重新创建session")
+                except Exception as e:
+                    errors["base"] = ERROR_MESSAGES.get("session_recreate_failed", "重新创建会话失败，请重试")
+                    _LOGGER.error(f"重新创建session失败: {str(e)}")
+                    return self._show_next_form(errors)
 
             try:
                 headers = {
@@ -159,12 +176,13 @@ class MySensorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
 
                 url = f"{QR_CODE_QUERY_URL}?token={self.token}"
+                _LOGGER.debug(f"准备发送QR查询请求，URL: {url}")
                 async with self._session.post(url, headers=headers) as response:
                     if response.status == 200:
                         try:
                             result = await response.json()
                         except aiohttp.ContentTypeError:
-                            errors["base"] = "invalid_response"
+                            errors["base"] = ERROR_MESSAGES.get("invalid_response", "服务器响应格式错误")
                             _LOGGER.error("QR查询响应不是有效的JSON格式")
                             return self._show_next_form(errors)
 
@@ -190,7 +208,7 @@ class MySensorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                         # 验证重定向响应是否成功
                                         if second_response.status != 200:
                                             _LOGGER.error(f"重定向请求失败，状态码: {second_response.status}")
-                                            errors["base"] = "认证过程中获取用户信息失败"
+                                            errors["base"] = ERROR_MESSAGES.get("auth_failed", "认证过程中获取用户信息失败")
                                             return self._show_next_form(errors)
 
                                         # 提取认证cookies
@@ -203,7 +221,7 @@ class MySensorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                         
                                         if missing_required:
                                             _LOGGER.error(f"必需Cookie缺失: {missing_required}")
-                                            errors["base"] = "登录认证失败，未获取到必需的认证信息"
+                                            errors["base"] = ERROR_MESSAGES.get("missing_cookies", "登录认证失败，未获取到必需的认证信息")
                                             return self._show_next_form(errors)
                                         
                                         # acw_tc 是可选的，如果缺失只记录警告
@@ -244,7 +262,7 @@ class MySensorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                             data={
                                                 "accessToken": cookies["access_token"],
                                                 "JSESSIONID-L": cookies["jsessionid"],
-                                                "acw_tc": cookies["acw_tc"],
+                                                "acw_tc": cookies.get("acw_tc") or "",  # acw_tc是可选的，如果为None则使用空字符串
                                                 "sf": self._selected_province_code,
                                                 "url": self.url,
                                                 "account_name": account_name,
@@ -256,31 +274,36 @@ class MySensorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                         )
 
                                 except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                                    errors["base"] = "二次请求失败"
+                                    errors["base"] = ERROR_MESSAGES.get("second_request_failed", "第二次请求失败，请重试")
                                     _LOGGER.error(f"第二次请求出错: {str(e)}")
                                     # 确保清理session资源
                                     await self._cleanup_session()
+                                    return self._show_next_form(errors)
                                 except Exception as e:
-                                    errors["base"] = "二次请求异常"
+                                    errors["base"] = ERROR_MESSAGES.get("second_request_error", "第二次请求异常，请重试")
                                     _LOGGER.error(f"第二次请求未知错误: {str(e)}")
                                     # 确保清理session资源
                                     await self._cleanup_session()
+                                    return self._show_next_form(errors)
                             else:
-                                errors["base"] = "操作失败: 未获取到重定向URL"
+                                errors["base"] = ERROR_MESSAGES.get("no_redirect_url", "操作失败: 未获取到重定向URL")
                         else:
                             errors["base"] = f"操作失败: {result.get('message', '未知错误')}"
                     else:
-                        errors["base"] = "server_error"
+                        errors["base"] = ERROR_MESSAGES.get("server_error", "服务器错误，请稍后重试")
                         _LOGGER.error(f"QR查询请求失败，状态码: {response.status}")
                         await self._cleanup_session()
 
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                errors["base"] = "connection_error"
-                _LOGGER.error(f"发送QR查询请求时出错: {str(e)}")
+                errors["base"] = ERROR_MESSAGES.get("connection_error", "网络连接错误，请检查网络")
+                error_type = type(e).__name__
+                error_msg = str(e) if str(e) else repr(e)
+                _LOGGER.error(f"发送QR查询请求时出错 [类型: {error_type}]: {error_msg}")
+                _LOGGER.debug(f"完整异常信息: {repr(e)}", exc_info=True)
                 # 确保清理session资源
                 await self._cleanup_session()
             except Exception as e:
-                errors["base"] = "unknown_error"
+                errors["base"] = ERROR_MESSAGES.get("unknown_error", "未知错误")
                 _LOGGER.error(f"QR查询未知错误: {str(e)}")
                 # 确保清理session资源
                 await self._cleanup_session()
@@ -385,9 +408,15 @@ class MySensorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
                 connector=connector
             ) as session:
+                # 确保jsessionid存在（防御性编程）
+                jsessionid = cookies.get('jsessionid')
+                if not jsessionid:
+                    _LOGGER.error("jsessionid缺失，无法获取用户信息")
+                    return None
+                
                 headers = {
                     "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-                    "Cookie": f"JSESSIONID-L={cookies['jsessionid']}",
+                    "Cookie": f"JSESSIONID-L={jsessionid}",
                     "User-Agent": "Mozilla/5.0",
                     "Accept": "*/*",
                     "Connection": "keep-alive"
@@ -397,7 +426,9 @@ class MySensorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 url = f"https://{self._selected_province_code}.122.gov.cn/user/m/userinfo/drvvio"
                 payload = "drvSize=10&vioSize=5&forcSize=5"
 
-                _LOGGER.info(f"获取用户信息参数 - 省份代码: {self._selected_province_code}, JSESSIONID: {cookies['jsessionid'][:20]}...")
+                # 安全地记录JSESSIONID（避免切片错误）
+                jsessionid_preview = cookies['jsessionid'][:20] if cookies.get('jsessionid') and len(cookies['jsessionid']) >= 20 else (cookies.get('jsessionid') or 'None')
+                _LOGGER.info(f"获取用户信息参数 - 省份代码: {self._selected_province_code}, JSESSIONID: {jsessionid_preview}...")
 
                 _LOGGER.info(f"开始获取用户信息，URL: {url}")
                 async with session.post(url, headers=headers, data=payload) as response:
@@ -406,7 +437,8 @@ class MySensorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         try:
                             response_text = await response.text()
                             _LOGGER.debug(f"用户信息接口原始响应: {response_text[:500]}...")
-                            data = await response.json()
+                            # 从text解析JSON，避免重复读取响应体
+                            data = json.loads(response_text)
                             _LOGGER.info(f"用户信息接口JSON解析成功: {type(data)}")
                             _LOGGER.debug(f"用户信息接口响应结构: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
 

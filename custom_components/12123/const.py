@@ -93,11 +93,15 @@ ERROR_MESSAGES = {
     "unknown_error": "未知错误",
     "no_image_data": "未获取到二维码图片",
     "session_lost": "会话丢失，请重新配置",
+    "session_closed": "会话已关闭，请重新配置",
+    "session_recreate_failed": "重新创建会话失败，请重试",
     "incomplete_auth": "认证信息不完整，请重试",
     "please_scan": "请扫描二维码",
-    "second_request_failed": "第二次请求失败",
-    "second_request_error": "第二次请求异常",
-    "no_redirect_url": "未获取到重定向URL"
+    "second_request_failed": "第二次请求失败，请重试",
+    "second_request_error": "第二次请求异常，请重试",
+    "no_redirect_url": "操作失败: 未获取到重定向URL",
+    "auth_failed": "认证过程中获取用户信息失败",
+    "missing_cookies": "登录认证失败，未获取到必需的认证信息"
 }
 
 # 默认图标
